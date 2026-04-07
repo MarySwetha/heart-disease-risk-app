@@ -1,160 +1,155 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
+import numpy as np
 import joblib
-import plotly.express as px
 import plotly.graph_objects as go
 import shap
-from reportlab.pdfgen import canvas
-from io import BytesIO
+import os
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+import tempfile
 from datetime import datetime
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="Heart Disease Predictor",
-    page_icon="❤️",
-    layout="wide"
-)
+st.set_page_config(page_title="Heart Disease Risk App", page_icon="❤️", layout="wide")
+
+st.title("❤️ Heart Disease Risk Prediction System")
+st.markdown("AI-powered cardiovascular risk prediction with Explainable AI")
 
 # ---------------- LOAD MODEL ----------------
 model = joblib.load("model/heart_model.pkl")
 scaler = joblib.load("model/scaler.pkl")
 
+# ---------------- INPUT SECTION ----------------
+st.sidebar.header("🩺 Enter Patient Data")
+
+age = st.sidebar.slider("Age", 20, 100, 50)
+sex = st.sidebar.selectbox("Sex", [0, 1])
+cp = st.sidebar.selectbox("Chest Pain Type", [0, 1, 2, 3])
+trestbps = st.sidebar.slider("Resting Blood Pressure", 80, 200, 120)
+chol = st.sidebar.slider("Cholesterol", 100, 400, 200)
+fbs = st.sidebar.selectbox("Fasting Blood Sugar", [0, 1])
+restecg = st.sidebar.selectbox("Resting ECG", [0, 1, 2])
+thalach = st.sidebar.slider("Max Heart Rate", 60, 220, 150)
+exang = st.sidebar.selectbox("Exercise Angina", [0, 1])
+oldpeak = st.sidebar.slider("Oldpeak", 0.0, 6.0, 1.0)
+slope = st.sidebar.selectbox("Slope", [0, 1, 2])
+ca = st.sidebar.selectbox("Major Vessels", [0, 1, 2, 3])
+thal = st.sidebar.selectbox("Thal", [0, 1, 2, 3])
+
+# ---------------- DATAFRAME ----------------
 feature_names = [
     "age", "sex", "cp", "trestbps", "chol", "fbs",
     "restecg", "thalach", "exang", "oldpeak",
     "slope", "ca", "thal"
 ]
 
+input_data = pd.DataFrame([[age, sex, cp, trestbps, chol, fbs,
+                            restecg, thalach, exang, oldpeak,
+                            slope, ca, thal]], columns=feature_names)
+
+scaled = scaler.transform(input_data)
+
 # ---------------- PDF FUNCTION ----------------
 def generate_pdf(patient_data, prediction_text, probability):
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer)
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    doc = SimpleDocTemplate(temp_file.name, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
 
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(100, 800, "Heart Disease Risk Prediction Report")
+    story.append(Paragraph("Heart Disease Risk Prediction Report", styles["Title"]))
+    story.append(Spacer(1, 12))
 
-    pdf.setFont("Helvetica", 12)
-    pdf.drawString(100, 770, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    y = 730
     for key, value in patient_data.items():
-        pdf.drawString(100, y, f"{key}: {value}")
-        y -= 20
+        story.append(Paragraph(f"{key}: {value}", styles["Normal"]))
 
-    pdf.drawString(100, y - 10, f"Prediction: {prediction_text}")
-    pdf.drawString(100, y - 30, f"Risk Probability: {probability:.2%}")
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"Prediction: {prediction_text}", styles["Heading2"]))
+    story.append(Paragraph(f"Risk Probability: {probability:.2%}", styles["Heading2"]))
+    story.append(Paragraph(f"Generated: {datetime.now()}", styles["Normal"]))
 
-    pdf.save()
-    buffer.seek(0)
-    return buffer
+    doc.build(story)
+    return temp_file.name
 
-# ---------------- HEADER ----------------
-st.title("❤️ Explainable Heart Disease Risk Prediction Dashboard")
-st.markdown("### AI + XAI powered cardiovascular clinical decision support")
+# ---------------- PREDICTION ----------------
+if st.button("🔍 Predict Risk"):
+    prediction = model.predict(scaled)[0]
+    probability = model.predict_proba(scaled)[0][1]
 
-col1, col2 = st.columns([1, 2])
+    prediction_text = "⚠️ High Risk of Heart Disease" if prediction == 1 else "✅ Low Risk of Heart Disease"
 
-# ---------------- INPUT PANEL ----------------
-with col1:
-    st.subheader("🩺 Patient Inputs")
+    st.subheader("🩺 Prediction Result")
+    st.success(prediction_text)
+    st.metric("Risk Probability", f"{probability:.2%}")
 
-    age = st.slider("Age", 20, 100, 45)
-    sex = st.selectbox("Sex", [0, 1])
-    cp = st.selectbox("Chest Pain Type", [0, 1, 2, 3])
-    trestbps = st.slider("Resting Blood Pressure", 80, 200, 120)
-    chol = st.slider("Cholesterol", 100, 400, 200)
-    fbs = st.selectbox("Fasting Blood Sugar", [0, 1])
-    restecg = st.selectbox("Rest ECG", [0, 1, 2])
-    thalach = st.slider("Max Heart Rate", 60, 220, 150)
-    exang = st.selectbox("Exercise Angina", [0, 1])
-    oldpeak = st.slider("Oldpeak", 0.0, 6.0, 1.0)
-    slope = st.selectbox("Slope", [0, 1, 2])
-    ca = st.selectbox("CA", [0, 1, 2, 3])
-    thal = st.selectbox("Thal", [0, 1, 2, 3])
+    # ---------------- GAUGE CHART ----------------
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=probability * 100,
+        title={"text": "Risk Level (%)"},
+        gauge={"axis": {"range": [0, 100]}}
+    ))
+    st.plotly_chart(fig, width="stretch")
 
-# ---------------- DASHBOARD ----------------
-with col2:
-    st.subheader("📊 Risk Dashboard")
+    # ---------------- SHAP EXPLAINABILITY ----------------
+    st.subheader("🧠 Explainable AI Insights")
 
-    if st.button("🔍 Predict + Explain"):
-        input_df = pd.DataFrame([[
-            age, sex, cp, trestbps, chol, fbs,
-            restecg, thalach, exang, oldpeak,
-            slope, ca, thal
-        ]], columns=feature_names)
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(input_data)
 
-        scaled = scaler.transform(input_df)
+    # Fix for different SHAP output structures
+    if isinstance(shap_values, list):
+        impact_values = np.array(shap_values[1]).flatten()
+    else:
+        impact_values = np.array(shap_values).flatten()
 
-        prediction = model.predict(scaled)[0]
-        probability = model.predict_proba(scaled)[0][1]
+    # Make sure lengths match
+    impact_values = impact_values[:len(feature_names)]
 
-        prediction_text = "High Risk" if prediction == 1 else "Low Risk"
+    shap_df = pd.DataFrame({
+        "Feature": feature_names,
+        "Impact": impact_values
+    }).sort_values("Impact", ascending=False)
 
-        if prediction == 1:
-            st.error(f"⚠️ High Risk ({probability:.2%})")
-        else:
-            st.success(f"✅ Low Risk ({probability:.2%})")
+    st.bar_chart(shap_df.set_index("Feature"), width="stretch")
 
-        # Gauge
-        fig_gauge = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=probability * 100,
-            title={'text': "Risk Probability %"},
-            gauge={'axis': {'range': [0, 100]}}
-        ))
-        st.plotly_chart(fig_gauge, width="stretch")
+    # ---------------- SAVE TO CSV ----------------
+    history_entry = {
+        "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Age": age,
+        "BP": trestbps,
+        "Cholesterol": chol,
+        "Heart Rate": thalach,
+        "Prediction": prediction_text,
+        "Probability": f"{probability:.2%}"
+    }
 
-        # Clinical chart
-        chart_df = pd.DataFrame({
-            "Feature": ["Age", "BP", "Cholesterol", "Heart Rate"],
-            "Value": [age, trestbps, chol, thalach]
-        })
-        fig = px.bar(chart_df, x="Feature", y="Value", title="Clinical Indicators")
-        st.plotly_chart(fig, width="stretch")
+    csv_file = "patient_history.csv"
 
-        # SHAP
-        st.subheader("🧠 Explainable AI Insights")
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(scaled)
+    if os.path.exists(csv_file):
+        history_df = pd.read_csv(csv_file)
+        history_df = pd.concat([history_df, pd.DataFrame([history_entry])], ignore_index=True)
+    else:
+        history_df = pd.DataFrame([history_entry])
 
-        if isinstance(shap_values, list):
-            impact_values = np.ravel(shap_values[1])
-        else:
-            impact_values = np.ravel(shap_values)
+    history_df.to_csv(csv_file, index=False)
 
-        shap_df = pd.DataFrame({
-            "Feature": feature_names,
-            "Impact": impact_values[:len(feature_names)]
-        })
+    # ---------------- PDF DOWNLOAD ----------------
+    patient_data = input_data.iloc[0].to_dict()
+    pdf_file = generate_pdf(patient_data, prediction_text, probability)
 
-        shap_df["Absolute Impact"] = shap_df["Impact"].abs()
-        shap_df = shap_df.sort_values("Absolute Impact", ascending=False)
-
-        fig_shap = px.bar(
-            shap_df,
-            x="Impact",
-            y="Feature",
-            orientation="h",
-            title="Feature Contribution to Prediction"
-        )
-        st.plotly_chart(fig_shap, width="stretch")
-
-        # PDF Download
-        patient_data = {
-            "Age": age,
-            "Sex": sex,
-            "Chest Pain": cp,
-            "Blood Pressure": trestbps,
-            "Cholesterol": chol,
-            "Heart Rate": thalach
-        }
-
-        pdf_file = generate_pdf(patient_data, prediction_text, probability)
-
+    with open(pdf_file, "rb") as f:
         st.download_button(
-            label="📄 Download Patient Report PDF",
-            data=pdf_file,
-            file_name="heart_disease_report.pdf",
+            "📄 Download Medical Report",
+            f,
+            file_name="heart_risk_report.pdf",
             mime="application/pdf"
         )
+
+# ---------------- HISTORY TABLE ----------------
+st.subheader("📁 Patient Prediction History")
+
+if "history" in st.session_state and st.session_state.history:
+    history_df = pd.DataFrame(st.session_state.history)
+    st.dataframe(history_df, width="stretch")
